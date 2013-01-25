@@ -36,7 +36,7 @@
  *                           University of Piemonte Orientale,
  *                           Alessandria (Italy)]
  *
- * This file is part of dcsxx-commons (below referred to as "this program").
+ * This file is part of dcsxx-network (below referred to as "this program").
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published
