@@ -537,6 +537,9 @@ class base_packet_sniffer
 	public: base_packet_sniffer()
 	: p_hnd_(0),
 	  p_filt_(0)
+	  filt_opt_(true),
+	  filt_netmask_(unknown_netmask),
+	  active_(false)
 	{
 	}
 
@@ -562,7 +565,43 @@ class base_packet_sniffer
 
 	public: virtual ::boost::shared_ptr<raw_packet> capture()
 	{
-		activate();
+		if (!active_)
+		{
+			activate();
+
+			// Compile and set the filter expression (if present)
+			if (!filt_expr_.empty())
+			{
+				if (p_filt_)
+				{
+					delete p_filt_;
+				}
+				p_filt_ = new ::bpf_program;
+
+				int ret(0);
+
+				ret = ::pcap_compile(p_hnd_,
+									 p_filt_,
+									 filt_expr_.c_str(),
+									 filt_opt_ ? 1 : 0,
+									 filt_netmask_ != unknown_netmask ? filt_netmask_ : 0);
+				if (ret < 0)
+				{
+					::std::ostringstream oss;
+					oss << "Couldn't compile filter: " << ::pcap_geterr(p_hnd_);
+					DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+				}
+
+				ret = ::pcap_setfilter(p_hnd_, p_filt_);
+				if (ret < 0)
+				{
+					::std::ostringstream oss;
+					oss << "Couldn't set filter: " << ::pcap_geterr(p_hnd_);
+					DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+				}
+			}
+			active_ = true;
+		}
 
 		::pcap_pkthdr* pkt_hdr(0);
 		::u_char const* pkt_data(0);
@@ -627,14 +666,27 @@ class base_packet_sniffer
 	}
 */
 
-	public: void filter(::std::string const& expr, bool optimize = false, uint32_type netmask = unknown_netmask)
+	public: void filter(::std::string const& expr, bool optimize = true, uint32_type netmask = unknown_netmask)
 	{
 		if (!p_filt_)
 		{
 			p_filt_ = new ::bpf_program;
 		}
 
-		::pcap_setfilter(p_hnd_, p_filt_);
+		if (::pcap_compile(p_hnd_, p_filt_, expr.c_str(), optimize ? 1 : 0, netmask) < 0)
+		{
+			::std::ostringstream oss;
+			oss << "Couldn't compile filter '" << expr << "': " << ::pcap_geterr(p_hnd_);
+			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+		}
+/*
+		if (::pcap_setfilter(p_hnd_, p_filt_) < 0)
+		{
+			::std::ostringstream oss;
+			oss << "Couldn't set filter '" << expr << "': " << ::pcap_geterr(p_hnd_);
+			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+		}
+*/
 	}
 
 	public: handle_type* native_handle()
@@ -747,9 +799,11 @@ class live_packet_sniffer: public base_packet_sniffer
 				case PCAP_WARNING_PROMISC_NOTSUP:
 					dcs::log_warn(DCS_LOGGING_AT, "Device does not support promiscuous mode");
 					break;
+#ifdef PCAP_WARNING_TSTAMP_TYPE_NOTSUP // Not available in old version of libpcap
 				case PCAP_WARNING_TSTAMP_TYPE_NOTSUP:
 					dcs::log_warn(DCS_LOGGING_AT, "Timestamp type isn't supported by the capture device");
 					break;
+#endif // PCAP_WARNING_TSTAMP_TYPE_NOTSUP
 				case PCAP_WARNING:
 					dcs::log_warn(DCS_LOGGING_AT, "Unclassified warning: " + ::std::string(pcap_geterr(this->native_handle())));
 					break;
@@ -762,9 +816,11 @@ class live_packet_sniffer: public base_packet_sniffer
 				case PCAP_ERROR_PERM_DENIED:
 					DCS_EXCEPTION_THROW(::std::logic_error, "Not enough permission to open the capture source");
 					break;
+#ifdef PCAP_ERROR_PROMISC_PERM_DENIED // Not available in old version of libpcap
 				case PCAP_ERROR_PROMISC_PERM_DENIED:
 					DCS_EXCEPTION_THROW(::std::logic_error, "Not enough permission to put the capture source in promiscuous mode");
 					break;
+#endif // PCAP_ERROR_PROMISC_PERM_DENIED
 				case PCAP_ERROR_RFMON_NOTSUP:
 					DCS_EXCEPTION_THROW(::std::logic_error, "The capture device doesn't support monitor mode");
 					break;
