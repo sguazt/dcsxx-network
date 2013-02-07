@@ -548,78 +548,49 @@ class base_packet_sniffer
 		close();
 	}
 
-	public: virtual void open() = 0;
-
-	public: virtual void close()
+	public: void open()
 	{
+		if (active_)
+		{
+			this->close();
+		}
+
+		this->do_open();
+	}
+
+	public: void close()
+	{
+		this->do_close();
+
 		if (p_filt_)
 		{
 			::pcap_freecode(p_filt_);
 			delete p_filt_;
+			p_filt_ = 0;
 		}
 		if (p_hnd_)
 		{
 			::pcap_close(p_hnd_);
+			p_hnd_ = 0;
 		}
+
+		filt_expr_ = "";
+		filt_opt_ = true;
+		filt_netmask_ = unknown_netmask;
 	}
 
 	public: virtual ::boost::shared_ptr<raw_packet> capture()
 	{
 		if (!active_)
 		{
-			activate();
+			this->do_activate();
 
-			// Compile and set the filter expression (if present)
-			if (!filt_expr_.empty())
-			{
-				if (p_filt_)
-				{
-					delete p_filt_;
-				}
-				p_filt_ = new ::bpf_program;
-
-				int ret(0);
-
-				ret = ::pcap_compile(p_hnd_,
-									 p_filt_,
-									 filt_expr_.c_str(),
-									 filt_opt_ ? 1 : 0,
-									 filt_netmask_ != unknown_netmask ? filt_netmask_ : 0);
-				if (ret < 0)
-				{
-					::std::ostringstream oss;
-					oss << "Couldn't compile filter: " << ::pcap_geterr(p_hnd_);
-					DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
-				}
-
-				ret = ::pcap_setfilter(p_hnd_, p_filt_);
-				if (ret < 0)
-				{
-					::std::ostringstream oss;
-					oss << "Couldn't set filter: " << ::pcap_geterr(p_hnd_);
-					DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
-				}
-			}
 			active_ = true;
+
+			this->create_filter();
 		}
 
-		::pcap_pkthdr* pkt_hdr(0);
-		::u_char const* pkt_data(0);
-		int ret = ::pcap_next_ex(this->native_handle(), &pkt_hdr, &pkt_data);
-		if (ret == 0)
-		{
-			// timeout
-			//TODO: what to do?
-			return ::boost::shared_ptr<raw_packet>();
-		}
-		else if (ret < 0)
-		{
-			std::ostringstream oss;
-			oss << "Couldn't capture packets: " << ::pcap_geterr(this->native_handle());
-			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
-		}
-
-		return ::boost::make_shared<raw_packet>(*pkt_hdr, pkt_data);
+		return this->do_capture();
 	}
 
 	public: void snapshot_length(int val)
@@ -668,25 +639,16 @@ class base_packet_sniffer
 
 	public: void filter(::std::string const& expr, bool optimize = true, uint32_type netmask = unknown_netmask)
 	{
-		if (!p_filt_)
-		{
-			p_filt_ = new ::bpf_program;
-		}
+		// Filter compilation and set is deferred since it must be done only when the sniffer is active
 
-		if (::pcap_compile(p_hnd_, p_filt_, expr.c_str(), optimize ? 1 : 0, netmask) < 0)
+		filt_expr_ = expr;
+		filt_opt_ = optimize;
+		filt_netmask_ = netmask;
+
+		if (active_)
 		{
-			::std::ostringstream oss;
-			oss << "Couldn't compile filter '" << expr << "': " << ::pcap_geterr(p_hnd_);
-			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+			this->create_filter();
 		}
-/*
-		if (::pcap_setfilter(p_hnd_, p_filt_) < 0)
-		{
-			::std::ostringstream oss;
-			oss << "Couldn't set filter '" << expr << "': " << ::pcap_geterr(p_hnd_);
-			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
-		}
-*/
 	}
 
 	public: handle_type* native_handle()
@@ -704,7 +666,74 @@ class base_packet_sniffer
 		p_hnd_ = p_hnd;
 	}
 
-	protected: virtual void activate() = 0;
+	protected: virtual void do_activate() = 0;
+
+	protected: virtual void do_open() = 0;
+
+	protected: virtual void do_close() = 0;
+
+	protected: virtual ::boost::shared_ptr<raw_packet> do_capture()
+	{
+		::pcap_pkthdr* pkt_hdr(0);
+		::u_char const* pkt_data(0);
+		int ret = ::pcap_next_ex(p_hnd_, &pkt_hdr, &pkt_data);
+		if (ret == 0)
+		{
+			// timeout
+			//TODO: what to do?
+			return ::boost::shared_ptr<raw_packet>();
+		}
+		else if (ret < 0)
+		{
+			std::ostringstream oss;
+			oss << "Couldn't capture packets: " << ::pcap_geterr(p_hnd_);
+			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+		}
+
+		return ::boost::make_shared<raw_packet>(*pkt_hdr, pkt_data);
+	}
+
+	private: void create_filter()
+	{
+		if (!active_)
+		{
+			// Filter can only be activated when the sniffer is running
+			return;
+		}
+
+		if (!filt_expr_.empty())
+		{
+			if (p_filt_)
+			{
+				delete p_filt_;
+			}
+
+			p_filt_ = new ::bpf_program;
+
+			int ret(0);
+
+			ret = ::pcap_compile(p_hnd_,
+								 p_filt_,
+								 filt_expr_.c_str(),
+								 filt_opt_ ? 1 : 0,
+								 //filt_netmask_ != unknown_netmask ? filt_netmask_ : 0);
+								 filt_netmask_);
+			if (ret < 0)
+			{
+				::std::ostringstream oss;
+				oss << "Couldn't compile filter: " << ::pcap_geterr(p_hnd_);
+				DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+			}
+
+			ret = ::pcap_setfilter(p_hnd_, p_filt_);
+			if (ret < 0)
+			{
+				::std::ostringstream oss;
+				oss << "Couldn't set filter: " << ::pcap_geterr(p_hnd_);
+				DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+			}
+		}
+	}
 
 
 	private: ::pcap_t* p_hnd_; ///< The pcap capture handle
@@ -735,32 +764,7 @@ class live_packet_sniffer: public base_packet_sniffer
 	{
 		dev_ = dev;
 
-		open();
-	}
-
-	public: void open()
-	{
-		char ebuf[PCAP_ERRBUF_SIZE];
-
-		::pcap_t* p_hnd = ::pcap_create(dev_.c_str(), ebuf);
-		if (!p_hnd)
-		{
-			std::ostringstream oss;
-			oss << "Couldn't open a live capture handle for device " << dev_ << ": " << ebuf;
-			DCS_EXCEPTION_THROW(std::runtime_error, oss.str());
-		}
-
-		::pcap_set_snaplen(p_hnd, 65535);
-		::pcap_set_promisc(p_hnd, 1);
-		::pcap_set_timeout(p_hnd, 1000);
-
-		this->native_handle(p_hnd);
-	}
-
-	public: void close()
-	{
-		base_type::close();
-		active_ = false;
+		this->do_open();
 	}
 
 	public: void timeout(int val)
@@ -787,7 +791,32 @@ class live_packet_sniffer: public base_packet_sniffer
 	}
 */
 
-	protected: void activate()
+	protected: void do_open()
+	{
+		char ebuf[PCAP_ERRBUF_SIZE];
+
+		::pcap_t* p_hnd = ::pcap_create(dev_.c_str(), ebuf);
+		if (!p_hnd)
+		{
+			std::ostringstream oss;
+			oss << "Couldn't open a live capture handle for device " << dev_ << ": " << ebuf;
+			DCS_EXCEPTION_THROW(std::runtime_error, oss.str());
+		}
+
+		::pcap_set_snaplen(p_hnd, 65535);
+		::pcap_set_promisc(p_hnd, 1);
+		::pcap_set_timeout(p_hnd, 1000);
+
+		this->native_handle(p_hnd);
+	}
+
+	protected: void do_close()
+	{
+		base_type::close();
+		active_ = false;
+	}
+
+	protected: void do_activate()
 	{
 		if (active_)
 		{
