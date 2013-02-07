@@ -536,7 +536,7 @@ class base_packet_sniffer
 
 	public: base_packet_sniffer()
 	: p_hnd_(0),
-	  p_filt_(0)
+	  p_filt_(0),
 	  filt_opt_(true),
 	  filt_netmask_(unknown_netmask),
 	  active_(false)
@@ -712,6 +712,7 @@ class base_packet_sniffer
 	private: ::std::string filt_expr_; ///< The filter expression
 	private: bool filt_opt_; ///< Flag to control the filter compilation
 	private: uint32_type filt_netmask_; ///< Netmask associated to the filter
+	private: bool active_; ///< Tell if the sniffer has been already activated
 }; // base_packet_sniffer
 
 class live_packet_sniffer: public base_packet_sniffer
