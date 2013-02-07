@@ -709,6 +709,9 @@ class base_packet_sniffer
 
 	private: ::pcap_t* p_hnd_; ///< The pcap capture handle
 	private: ::bpf_program* p_filt_; ///< The current packet filter
+	private: ::std::string filt_expr_; ///< The filter expression
+	private: bool filt_opt_; ///< Flag to control the filter compilation
+	private: uint32_type filt_netmask_; ///< Netmask associated to the filter
 }; // base_packet_sniffer
 
 class live_packet_sniffer: public base_packet_sniffer
