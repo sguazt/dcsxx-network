@@ -35,6 +35,7 @@
 
 
 #include <arpa/inet.h> // Available in POSIX.1-2001 systems
+#include <boost/cstdint.hpp>
 
 
 namespace dcs { namespace network {
