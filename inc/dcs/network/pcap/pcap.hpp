@@ -525,10 +525,32 @@ struct sniff_tcp {
 }
 */
 
+namespace detail { namespace /*<unnamed>*/ {
+
+struct sniffer_user_packet_handler
+{
+	virtual void operator()(::boost::shared_ptr<raw_packet> const& p_pkt) = 0;
+};
+
+void sniffer_packet_handler_cback(::u_char* p_user, ::pcap_pkthdr const* p_pkt_hdr, ::u_char const* p_pkt_data)
+{
+	sniffer_user_packet_handler* p_handler = reinterpret_cast<sniffer_user_packet_handler*>(p_user); 
+	::boost::shared_ptr<raw_packet> p_pkt = ::boost::make_shared<raw_packet>(*p_pkt_hdr, p_pkt_data);
+
+	(*p_handler)(p_pkt);
+}
+
+}} // Namespace detail::<unnamed>
+
+
+typedef detail::sniffer_user_packet_handler sniffer_batch_packet_handler;
+
+
 class base_packet_sniffer
 {
 	public: typedef ::pcap_t handle_type;
-	public: typedef bpf_u_int32 uint32_type;
+	public: typedef ::bpf_u_int32 uint32_type;
+	public: typedef sniffer_batch_packet_handler packet_handler_type;
 
 
 	public: static const uint32_type unknown_netmask = PCAP_NETMASK_UNKNOWN;
@@ -591,6 +613,20 @@ class base_packet_sniffer
 		}
 
 		return this->do_capture();
+	}
+
+	public: virtual void batch_capture(packet_handler_type& handler)
+	{
+		if (!active_)
+		{
+			this->do_activate();
+
+			active_ = true;
+
+			this->create_filter();
+		}
+
+		this->do_batch_capture(handler);
 	}
 
 	public: void snapshot_length(int val)
@@ -693,6 +729,26 @@ class base_packet_sniffer
 		return ::boost::make_shared<raw_packet>(*pkt_hdr, pkt_data);
 	}
 
+	protected: virtual void do_batch_capture(packet_handler_type& handler)
+	{
+		int ret = ::pcap_loop(p_hnd_, -1, &detail::sniffer_packet_handler_cback, reinterpret_cast< ::u_char* >(&handler));
+		if (ret == 0)
+		{
+			// Not possible if cnt == -1
+		}
+		else if (ret == -1)
+		{
+			std::ostringstream oss;
+			oss << "Couldn't capture packets: " << ::pcap_geterr(p_hnd_);
+			DCS_EXCEPTION_THROW(::std::logic_error, oss.str());
+		}
+		else if (ret == -2)
+		{
+			// The loop terminated due to a call to pcap_breakloop() before any packets were processed
+			//TODO: what to do?
+		}
+	}
+
 	private: void create_filter()
 	{
 		if (!active_)
@@ -743,6 +799,7 @@ class base_packet_sniffer
 	private: uint32_type filt_netmask_; ///< Netmask associated to the filter
 	private: bool active_; ///< Tell if the sniffer has been already activated
 }; // base_packet_sniffer
+
 
 class live_packet_sniffer: public base_packet_sniffer
 {
@@ -875,6 +932,7 @@ class live_packet_sniffer: public base_packet_sniffer
 	private: ::std::string dev_;
 	private: bool active_;
 }; // live_packet_sniffer
+
 
 //class offline_packet_sniffer: public base_packet_sniffer
 //{
