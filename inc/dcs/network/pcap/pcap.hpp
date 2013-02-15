@@ -555,12 +555,16 @@ class base_packet_sniffer
 
 	public: static const uint32_type unknown_netmask = PCAP_NETMASK_UNKNOWN;
 
+	private: static const int default_filter_netmask = unknown_netmask;
+
+	private: static const bool default_filter_optimization = true;
+
 
 	public: base_packet_sniffer()
 	: p_hnd_(0),
 	  p_filt_(0),
-	  filt_opt_(true),
-	  filt_netmask_(unknown_netmask),
+	  filt_opt_(default_filter_optimization),
+	  filt_netmask_(default_filter_netmask),
 	  active_(false)
 	{
 	}
@@ -628,50 +632,6 @@ class base_packet_sniffer
 
 		this->do_batch_capture(handler);
 	}
-
-	public: void snapshot_length(int val)
-	{
-		DCS_ASSERT(val > 0,
-				   DCS_EXCEPTION_THROW(::std::invalid_argument,
-									   "Invalid snapshot length: expected a positive number"));
-
-		int ret = ::pcap_set_snaplen(p_hnd_, val);
-		if (ret == PCAP_ERROR_ACTIVATED)
-		{
-			DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
-		}
-	}
-
-/*
-	public: int snapshot_length() const
-	{
-		DCS_ASSERT(p_hnd_,
-				   DCS_EXCEPTION_THROW(::std::logic_error,
-									   "Capture handle is not set"));
-
-		return p_hnd_->snapshot;
-	}
-*/
-
-	public: void promiscuous_mode(bool val)
-	{
-		int ret = ::pcap_set_promisc(p_hnd_, val ? 1 : 0);
-		if (ret == PCAP_ERROR_ACTIVATED)
-		{
-			DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
-		}
-	}
-
-/*
-	public: bool promiscuous_mode() const
-	{
-		DCS_ASSERT(p_hnd_,
-				   DCS_EXCEPTION_THROW(::std::logic_error,
-									   "Capture handle is not set"));
-
-		return p_hnd_->opt.promisc ? true : false;
-	}
-*/
 
 	public: void filter(::std::string const& expr, bool optimize = true, uint32_type netmask = unknown_netmask)
 	{
@@ -806,13 +766,26 @@ class live_packet_sniffer: public base_packet_sniffer
 	private: typedef base_packet_sniffer base_type;
 
 
+	private: static const int default_snapshot_length = 65535;
+
+	private: static const bool default_promiscuous_mode = true;
+
+	private: static const int default_read_timeout = 1000;
+
+
 	public: live_packet_sniffer()
-	: active_(false)
+	: active_(false),
+	  snaplen_(default_snapshot_length),
+	  promisc_(default_promiscuous_mode),
+	  rd_timeout_(default_read_timeout)
 	{
 	}
 
 	public: live_packet_sniffer(::std::string const& dev)
-	: active_(false)
+	: active_(false),
+	  snaplen_(default_snapshot_length),
+	  promisc_(default_promiscuous_mode),
+	  rd_timeout_(default_read_timeout)
 	{
 		open(dev);
 	}
@@ -821,32 +794,81 @@ class live_packet_sniffer: public base_packet_sniffer
 	{
 		dev_ = dev;
 
-		this->do_open();
+		base_type::open();
 	}
 
-	public: void timeout(int val)
+	public: void snapshot_length(int val)
+	{
+		DCS_ASSERT(val > 0,
+				   DCS_EXCEPTION_THROW(::std::invalid_argument,
+									   "Invalid snapshot length: expected a positive number"));
+		snaplen_ = val;
+
+		if (this->native_handle())
+		{
+			int ret;
+			ret = ::pcap_set_snaplen(this->native_handle(), snaplen_);
+			if (ret == PCAP_ERROR_ACTIVATED)
+			{
+				DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
+			}
+			ret = this->snapshot_length();
+			if (ret > val)
+			{
+				::std::ostringstream oss;
+				oss << "Snapshot length raised from " << val << " to " << ret;
+
+				::dcs::log_warn(DCS_LOGGING_AT, oss.str());
+			}
+		}
+	}
+
+	public: int snapshot_length() const
+	{
+		return snaplen_;
+	}
+
+	public: void promiscuous_mode(bool val)
+	{
+		promisc_ = val;
+
+		if (this->native_handle())
+		{
+			int ret = ::pcap_set_promisc(this->native_handle(), promisc_ ? 1 : 0);
+			if (ret == PCAP_ERROR_ACTIVATED)
+			{
+				DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
+			}
+		}
+	}
+
+	public: bool promiscuous_mode() const
+	{
+		return promisc_;
+	}
+
+	public: void read_timeout(int val)
 	{
 		DCS_ASSERT(val > 0,
 				   DCS_EXCEPTION_THROW(::std::invalid_argument,
 									   "Invalid timeout: expected a positive number"));
 
-		int ret = ::pcap_set_timeout(this->native_handle(), val);
-		if (ret == PCAP_ERROR_ACTIVATED)
+		rd_timeout_ = val;
+
+		if (this->native_handle())
 		{
-			DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
+			int ret = ::pcap_set_timeout(this->native_handle(), rd_timeout_);
+			if (ret == PCAP_ERROR_ACTIVATED)
+			{
+				DCS_EXCEPTION_THROW(::std::logic_error, "Capture handle has been already activated");
+			}
 		}
 	}
 
-/*
-	public: int timeout() const
+	public: int read_timeout() const
 	{
-		DCS_ASSERT(this->native_handle(),
-				   DCS_EXCEPTION_THROW(::std::logic_error,
-									   "Capture handle is not set"));
-
-		return this->native_handle()->md.timeout;
+		return rd_timeout_;
 	}
-*/
 
 	protected: void do_open()
 	{
@@ -860,16 +882,18 @@ class live_packet_sniffer: public base_packet_sniffer
 			DCS_EXCEPTION_THROW(std::runtime_error, oss.str());
 		}
 
-		::pcap_set_snaplen(p_hnd, 65535);
-		::pcap_set_promisc(p_hnd, 1);
-		::pcap_set_timeout(p_hnd, 1000);
+		::pcap_set_snaplen(p_hnd, snaplen_);
+		::pcap_set_promisc(p_hnd, promisc_);
+		::pcap_set_timeout(p_hnd, rd_timeout_);
 
 		this->native_handle(p_hnd);
 	}
 
 	protected: void do_close()
 	{
-		base_type::close();
+		snaplen_ = default_snapshot_length;
+		promisc_ = default_promiscuous_mode;
+		rd_timeout_ = default_read_timeout;
 		active_ = false;
 	}
 
@@ -931,8 +955,10 @@ class live_packet_sniffer: public base_packet_sniffer
 
 	private: ::std::string dev_;
 	private: bool active_;
+	private: int snaplen_;
+	private: bool promisc_;
+	private: int rd_timeout_;
 }; // live_packet_sniffer
-
 
 //class offline_packet_sniffer: public base_packet_sniffer
 //{
