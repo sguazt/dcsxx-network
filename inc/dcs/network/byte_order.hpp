@@ -52,12 +52,12 @@ struct byte_order< ::boost::uint32_t >
 {
 	static ::boost::uint32_t host_to_network(::boost::uint32_t v)
 	{
-		return ::htonl(v);
+		return htonl(v);
 	}
 
 	static ::boost::uint32_t network_to_host(::boost::uint32_t v)
 	{
-		return ::ntohl(v);
+		return ntohl(v);
 	}
 };
 
@@ -66,12 +66,12 @@ struct byte_order< ::boost::uint16_t >
 {
 	static ::boost::uint16_t host_to_network(::boost::uint16_t v)
 	{
-		return ::htons(v);
+		return htons(v);
 	}
 
 	static ::boost::uint16_t network_to_host(::boost::uint16_t v)
 	{
-		return ::ntohs(v);
+		return ntohs(v);
 	}
 };
 
